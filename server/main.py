@@ -12,7 +12,7 @@ from connection_manager import ConnectionManager, ServerFullException
 import uuid
 from uuid import UUID
 import time
-from typing import Any, Protocol, TypeVar, runtime_checkable, cast
+from typing import Any, Protocol, runtime_checkable
 from util import pil_to_frame, bytes_to_pil, is_firefox, get_pipeline_class, ParamsModel
 from device import device, torch_dtype
 import asyncio

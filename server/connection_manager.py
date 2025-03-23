@@ -3,7 +3,7 @@ import asyncio
 from fastapi import WebSocket
 from starlette.websockets import WebSocketState
 import logging
-from typing import Any, TypeVar
+from typing import Any
 from util import ParamsModel
 
 Connections = dict[UUID, dict[str, WebSocket | asyncio.Queue]]

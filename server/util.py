@@ -1,12 +1,12 @@
 from importlib import import_module
-from typing import Any, TypeVar, Generic, TypeVar
+from typing import Any, TypeVar, type_check_only
 from PIL import Image
 import io
-from pydantic import BaseModel, create_model, Field
+from pydantic import BaseModel
 
 
+# Used only for type checking the pipeline class
 TPipeline = TypeVar("TPipeline", bound=type[Any])
-T = TypeVar('T')
 
 
 class ParamsModel(BaseModel):
@@ -22,7 +22,20 @@ class ParamsModel(BaseModel):
         return self.model_dump()
 
 
-def get_pipeline_class(pipeline_name: str) -> TPipeline:
+def get_pipeline_class(pipeline_name: str) -> type:
+    """
+    Dynamically imports and returns the Pipeline class from a specified module.
+    
+    Args:
+        pipeline_name: The name of the pipeline module to import
+        
+    Returns:
+        The Pipeline class from the specified module
+        
+    Raises:
+        ValueError: If the module or Pipeline class isn't found
+        TypeError: If Pipeline is not a class
+    """
     try:
         module = import_module(f"pipelines.{pipeline_name}")
     except ModuleNotFoundError:
