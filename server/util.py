@@ -1,5 +1,5 @@
 from importlib import import_module
-from typing import Any, TypeVar, type_check_only
+from typing import Any, TypeVar
 from PIL import Image
 import io
 from pydantic import BaseModel
@@ -11,12 +11,17 @@ TPipeline = TypeVar("TPipeline", bound=type[Any])
 
 class ParamsModel(BaseModel):
     """Base model for pipeline parameters."""
-    
+
+    model_config = {
+        "arbitrary_types_allowed": True,
+        "extra": "allow",  # Allow extra attributes for dynamic fields like 'image'
+    }
+
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> 'ParamsModel':
+    def from_dict(cls, data: dict[str, Any]) -> "ParamsModel":
         """Create a model instance from dictionary data."""
         return cls.model_validate(data)
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert model to dictionary."""
         return self.model_dump()
@@ -25,13 +30,13 @@ class ParamsModel(BaseModel):
 def get_pipeline_class(pipeline_name: str) -> type:
     """
     Dynamically imports and returns the Pipeline class from a specified module.
-    
+
     Args:
         pipeline_name: The name of the pipeline module to import
-        
+
     Returns:
         The Pipeline class from the specified module
-        
+
     Raises:
         ValueError: If the module or Pipeline class isn't found
         TypeError: If Pipeline is not a class

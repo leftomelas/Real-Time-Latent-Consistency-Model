@@ -18,6 +18,7 @@ from huggingface_hub import hf_hub_download
 from config import Args
 from pydantic import BaseModel, Field
 from PIL import Image
+from util import ParamsModel
 import math
 
 base = "stabilityai/stable-diffusion-xl-base-1.0"
@@ -62,7 +63,7 @@ class Pipeline:
         input_mode: str = "image"
         page_content: str = page_content
 
-    class InputParams(BaseModel):
+    class InputParams(ParamsModel):
         prompt: str = Field(
             default_prompt,
             title="Prompt",

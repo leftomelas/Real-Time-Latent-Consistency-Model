@@ -28,6 +28,7 @@ from config import Args
 from pydantic import BaseModel, Field
 from PIL import Image
 from pathlib import Path
+from util import ParamsModel
 import math
 import gc
 
@@ -61,7 +62,7 @@ class Pipeline:
         input_mode: str = "image"
         page_content: str = page_content
 
-    class InputParams(BaseModel):
+    class InputParams(ParamsModel):
         prompt: str = Field(
             default_prompt,
             title="Prompt",

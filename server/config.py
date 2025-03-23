@@ -1,9 +1,10 @@
-from typing import NamedTuple
+from pydantic import BaseModel, field_validator
 import argparse
 import os
+from typing import Annotated
 
 
-class Args(NamedTuple):
+class Args(BaseModel):
     host: str
     port: int
     reload: bool
@@ -13,18 +14,29 @@ class Args(NamedTuple):
     torch_compile: bool
     taesd: bool
     pipeline: str
-    ssl_certfile: str
-    ssl_keyfile: str
+    ssl_certfile: str | None
+    ssl_keyfile: str | None
     sfast: bool
     onediff: bool = False
     compel: bool = False
     debug: bool = False
 
-    def pretty_print(self):
+    def pretty_print(self) -> None:
         print("\n")
-        for field, value in self._asdict().items():
+        for field, value in self.model_dump().items():
             print(f"{field}: {value}")
         print("\n")
+
+    @field_validator("ssl_keyfile")
+    @classmethod
+    def validate_ssl_keyfile(cls, v: str | None, info) -> str | None:
+        """Validate that if ssl_certfile is provided, ssl_keyfile is also provided."""
+        ssl_certfile = info.data.get("ssl_certfile")
+        if ssl_certfile and not v:
+            raise ValueError(
+                "If ssl_certfile is provided, ssl_keyfile must also be provided"
+            )
+        return v
 
 
 MAX_QUEUE_SIZE = int(os.environ.get("MAX_QUEUE_SIZE", 0))
@@ -113,5 +125,5 @@ parser.add_argument(
 )
 parser.set_defaults(taesd=USE_TAESD)
 
-config = Args(**vars(parser.parse_args()))
+config = Args.model_validate(vars(parser.parse_args()))
 config.pretty_print()

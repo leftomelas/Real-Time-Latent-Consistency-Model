@@ -57,33 +57,84 @@
     }
   }
 
-  $: isLCMRunning = $lcmLiveStatus !== LCMLiveStatus.DISCONNECTED;
-  $: if ($lcmLiveStatus === LCMLiveStatus.TIMEOUT) {
-    warningMessage = 'Session timed out. Please try again.';
+  $: isLCMRunning = $lcmLiveStatus !== LCMLiveStatus.DISCONNECTED && 
+                 $lcmLiveStatus !== LCMLiveStatus.ERROR;
+  $: isConnecting = $lcmLiveStatus === LCMLiveStatus.CONNECTING;
+                 
+  $: {
+    // Set warning messages based on lcmLiveStatus
+    if ($lcmLiveStatus === LCMLiveStatus.TIMEOUT) {
+      warningMessage = 'Session timed out. Please try again.';
+    } else if ($lcmLiveStatus === LCMLiveStatus.ERROR) {
+      warningMessage = 'Connection error occurred. Please try again.';
+    }
   }
   let disabled = false;
   async function toggleLcmLive() {
     try {
       if (!isLCMRunning) {
-        if (isImageMode) {
-          await mediaStreamActions.enumerateDevices();
-          await mediaStreamActions.start();
+        if (isConnecting) {
+          return; // Don't allow multiple connection attempts
         }
+        
+        // Clear any previous warning messages
+        warningMessage = '';
         disabled = true;
-        await lcmLiveActions.start(getSreamdata);
-        disabled = false;
-        toggleQueueChecker(false);
-      } else {
-        if (isImageMode) {
-          mediaStreamActions.stop();
+        
+        try {
+          if (isImageMode) {
+            await mediaStreamActions.enumerateDevices();
+            await mediaStreamActions.start();
+          }
+          
+          await lcmLiveActions.start(getSreamdata);
+          toggleQueueChecker(false);
+        } finally {
+          // Always re-enable the button even if there was an error
+          disabled = false;
         }
-        lcmLiveActions.stop();
-        toggleQueueChecker(true);
+      } else {
+        // Handle stopping - disable button during this process too
+        disabled = true;
+        
+        try {
+          if (isImageMode) {
+            mediaStreamActions.stop();
+          }
+          await lcmLiveActions.stop();
+          toggleQueueChecker(true);
+        } finally {
+          disabled = false;
+        }
       }
     } catch (e) {
-      warningMessage = e instanceof Error ? e.message : '';
+      console.error('Error in toggleLcmLive:', e);
+      warningMessage = e instanceof Error ? e.message : 'An unknown error occurred';
       disabled = false;
       toggleQueueChecker(true);
+    }
+  }
+  
+  // Reconnect function for automatic reconnection
+  async function reconnect() {
+    try {
+      disabled = true;
+      warningMessage = 'Reconnecting...';
+      
+      if (isImageMode) {
+        await mediaStreamActions.stop();
+        await mediaStreamActions.enumerateDevices();
+        await mediaStreamActions.start();
+      }
+      
+      await lcmLiveActions.reconnect(getSreamdata);
+      warningMessage = '';
+      toggleQueueChecker(false);
+    } catch (e) {
+      warningMessage = e instanceof Error ? e.message : 'Reconnection failed';
+      toggleQueueChecker(true);
+    } finally {
+      disabled = false;
     }
   }
 </script>
@@ -111,6 +162,17 @@
         > and run it on your own GPU.
       </p>
     {/if}
+    
+    {#if $lcmLiveStatus === LCMLiveStatus.ERROR}
+      <p class="text-sm mt-2">
+        <button 
+          class="text-blue-500 underline hover:no-underline" 
+          on:click={reconnect}
+          disabled={disabled}>
+          Try reconnecting
+        </button>
+      </p>
+    {/if}
   </article>
   {#if pipelineParams}
     <article class="my-3 grid grid-cols-1 gap-3 sm:grid-cols-4">
@@ -127,7 +189,9 @@
       </div>
       <div class="sm:col-span-4 sm:row-start-2">
         <Button on:click={toggleLcmLive} {disabled} classList={'text-lg my-1 p-2'}>
-          {#if isLCMRunning}
+          {#if isConnecting}
+            Connecting...
+          {:else if isLCMRunning}
             Stop
           {:else}
             Start

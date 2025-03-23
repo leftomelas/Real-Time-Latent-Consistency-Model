@@ -7,8 +7,8 @@
   import Expand from '$lib/icons/expand.svelte';
   import { snapImage, expandWindow } from '$lib/utils';
 
-  $: isLCMRunning = $lcmLiveStatus !== LCMLiveStatus.DISCONNECTED;
-  $: console.log('isLCMRunning', isLCMRunning);
+  $: isLCMRunning = $lcmLiveStatus !== LCMLiveStatus.DISCONNECTED && 
+                 $lcmLiveStatus !== LCMLiveStatus.ERROR;
   let imageEl: HTMLImageElement;
   let expandedWindow: Window;
   let isExpanded = false;
@@ -40,12 +40,26 @@
   class="relative mx-auto aspect-square max-w-lg self-center overflow-hidden rounded-lg border border-slate-300"
 >
   <!-- svelte-ignore a11y-missing-attribute -->
-  {#if isLCMRunning}
+  {#if $lcmLiveStatus === LCMLiveStatus.CONNECTING}
+    <!-- Show connecting spinner -->
+    <div class="flex items-center justify-center h-full w-full">
+      <div class="animate-spin rounded-full h-16 w-16 border-b-2 border-white"></div>
+      <p class="text-white ml-2">Connecting...</p>
+    </div>
+  {:else if isLCMRunning}
     {#if !isExpanded}
+      <!-- Handle image error by adding onerror event -->
       <img
         bind:this={imageEl}
         class="aspect-square w-full rounded-lg"
         src={'/api/stream/' + $streamId}
+        on:error={(e) => {
+          console.error('Image stream error:', e);
+          // If stream fails to load, set status to error
+          if ($lcmLiveStatus !== LCMLiveStatus.ERROR) {
+            lcmLiveStatus.set(LCMLiveStatus.ERROR);
+          }
+        }}
       />
     {/if}
     <div class="absolute bottom-1 right-1">
@@ -64,6 +78,13 @@
       >
         <Floppy classList={''} />
       </Button>
+    </div>
+  {:else if $lcmLiveStatus === LCMLiveStatus.ERROR}
+    <!-- Show error state with red border -->
+    <div class="flex items-center justify-center h-full w-full border-2 border-red-500 rounded-lg bg-gray-900">
+      <p class="text-center text-white p-4">
+        Connection error
+      </p>
     </div>
   {:else}
     <img

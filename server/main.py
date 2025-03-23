@@ -1,4 +1,5 @@
-from fastapi import FastAPI, WebSocket, HTTPException, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, HTTPException
+from fastapi.websockets import WebSocketDisconnect
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -9,37 +10,38 @@ from PIL import Image
 import logging
 from config import config, Args
 from connection_manager import ConnectionManager, ServerFullException
-import uuid
 from uuid import UUID
 import time
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable, AsyncGenerator
 from util import pil_to_frame, bytes_to_pil, is_firefox, get_pipeline_class, ParamsModel
 from device import device, torch_dtype
 import asyncio
 import os
 import time
-import torch
-from pydantic import BaseModel, create_model
+
+# Common WebSocket error messages that indicate disconnection
+ERROR_MESSAGES = [
+    "WebSocket is not connected",
+    'Cannot call "send" once a close message has been sent',
+    'Cannot call "receive" once a close message has been sent',
+    "WebSocket is disconnected",
+]
+
 
 @runtime_checkable
 class BasePipeline(Protocol):
     class Info:
         @classmethod
-        def schema(cls) -> dict[str, Any]:
-            ...
+        def schema(cls) -> dict[str, Any]: ...
+
         page_content: str | None
         input_mode: str
-    
+
     class InputParams(ParamsModel):
         @classmethod
-        def schema(cls) -> dict[str, Any]:
-            ...
-        
-        def dict(self) -> dict[str, Any]:
-            ...
-            
-    def predict(self, params: ParamsModel) -> Image.Image | None:
-        ...
+        def schema(cls) -> dict[str, Any]: ...
+
+    def predict(self, params: ParamsModel) -> Image.Image | None: ...
 
 
 THROTTLE = 1.0 / 120
@@ -74,7 +76,22 @@ class App:
                 await handle_websocket_data(user_id)
             except ServerFullException as e:
                 logging.error(f"Server Full: {e}")
+            except WebSocketDisconnect as disconnect_error:
+                # Handle websocket disconnection event
+                code = disconnect_error.code
+                if code == 1006:  # ABNORMAL_CLOSURE
+                    logging.info(f"WebSocket abnormally closed for user {user_id}: Connection was closed without a proper close handshake")
+                else:
+                    logging.info(f"WebSocket disconnected for user {user_id} with code {code}: {disconnect_error.reason}")
+            except RuntimeError as e:
+                if any(err in str(e) for err in ERROR_MESSAGES):
+                    logging.info(f"WebSocket disconnected for user {user_id}: {e}")
+                else:
+                    logging.error(f"Runtime error in websocket endpoint: {e}")
+            except Exception as e:
+                logging.error(f"Unexpected error in websocket endpoint: {e}")
             finally:
+                # Always ensure we disconnect the user
                 await self.conn_manager.disconnect(user_id)
                 logging.info(f"User disconnected: {user_id}")
 
@@ -99,34 +116,73 @@ class App:
                         return
                     data = await self.conn_manager.receive_json(user_id)
                     if data is None:
+                        # Check if the user is still connected - they might have disconnected
+                        if not self.conn_manager.check_user(user_id):
+                            logging.info(
+                                f"User {user_id} disconnected, exiting handle_websocket_data loop"
+                            )
+                            return
                         continue
-                        
+
+                    # Validate that data is a dictionary and has a status field
+                    if not isinstance(data, dict) or "status" not in data:
+                        logging.error(
+                            f"Invalid data format received from user {user_id}: {data}"
+                        )
+                        continue
+
                     if data["status"] == "next_frame":
                         info = self.pipeline.Info()
                         params_data = await self.conn_manager.receive_json(user_id)
                         if params_data is None:
+                            # Check if the user is still connected
+                            if not self.conn_manager.check_user(user_id):
+                                logging.info(
+                                    f"User {user_id} disconnected during params reception"
+                                )
+                                return
                             continue
-                            
+
                         params = self.pipeline.InputParams.model_validate(params_data)
-                        
+
                         if info.input_mode == "image":
                             image_data = await self.conn_manager.receive_bytes(user_id)
-                            if image_data is None or len(image_data) == 0:
+                            if image_data is None:
+                                # Check if the user is still connected
+                                if not self.conn_manager.check_user(user_id):
+                                    logging.info(
+                                        f"User {user_id} disconnected during image reception"
+                                    )
+                                    return
                                 await self.conn_manager.send_json(
                                     user_id, {"status": "send_frame"}
                                 )
                                 continue
-                            
-                            # Create a new Pydantic model with the image field
-                            params_dict = params.model_dump()
-                            params_dict["image"] = bytes_to_pil(image_data)
-                            params = self.pipeline.InputParams.model_validate(params_dict)
+                            if len(image_data) == 0:
+                                await self.conn_manager.send_json(
+                                    user_id, {"status": "send_frame"}
+                                )
+                                continue
+
+                            # Add the image directly to the model using setattr
+                            # This works because we've configured the ParamsModel to allow extra fields
+                            setattr(params, "image", bytes_to_pil(image_data))
 
                         await self.conn_manager.update_data(user_id, params)
                         await self.conn_manager.send_json(user_id, {"status": "wait"})
 
+            except RuntimeError as e:
+                error_msg = str(e)
+                if any(err in error_msg for err in ERROR_MESSAGES):
+                    logging.info(
+                        f"WebSocket disconnected for user {user_id}: {error_msg}"
+                    )
+                else:
+                    logging.error(f"Websocket Runtime Error: {e}, {user_id}")
+                # Ensure disconnect is called
+                await self.conn_manager.disconnect(user_id)
             except Exception as e:
-                logging.error(f"Websocket Error: {e}, {user_id} ")
+                logging.error(f"Websocket Error: {e}, {user_id}")
                 await self.conn_manager.disconnect(user_id)
 
         @self.app.get("/api/queue")
@@ -137,25 +193,58 @@ class App:
         @self.app.get("/api/stream/{user_id}")
         async def stream(user_id: UUID, request: Request) -> StreamingResponse:
             try:
-                async def generate() -> bytes:
+
+                async def generate() -> AsyncGenerator[bytes, None]:
                     last_params: ParamsModel | None = None
                     while True:
+                        # Check if the user is still connected
+                        if not self.conn_manager.check_user(user_id):
+                            logging.info(f"User {user_id} disconnected from stream")
+                            break
+
                         last_time = time.time()
-                        await self.conn_manager.send_json(
-                            user_id, {"status": "send_frame"}
-                        )
-                        params = await self.conn_manager.get_latest_data(user_id)
-                        
-                        if (params is None or 
-                            (last_params is not None and 
-                             params.model_dump() == last_params.model_dump())):
+                        try:
+                            await self.conn_manager.send_json(
+                                user_id, {"status": "send_frame"}
+                            )
+                        except Exception as e:
+                            logging.error(f"Error sending to websocket in stream: {e}")
+                            # User might have disconnected
+                            if not self.conn_manager.check_user(user_id):
+                                logging.info(f"User {user_id} disconnected from stream")
+                                break
                             await asyncio.sleep(THROTTLE)
                             continue
-                            
-                        last_params = params
-                        image = self.pipeline.predict(params)
 
-                        if self.args.safety_checker and self.safety_checker is not None and image is not None:
+                        params = await self.conn_manager.get_latest_data(user_id)
+
+                        if params is None:
+                            await asyncio.sleep(THROTTLE)
+                            continue
+
+                        try:
+                            # Check if the params haven't changed since last time
+                            if (
+                                last_params is not None
+                                and params.model_dump() == last_params.model_dump()
+                            ):
+                                await asyncio.sleep(THROTTLE)
+                                continue
+
+                            last_params = params
+                            image = self.pipeline.predict(params)
+                        except Exception as e:
+                            logging.error(
+                                f"Error processing params for user {user_id}: {e}"
+                            )
+                            await asyncio.sleep(THROTTLE)
+                            continue
+
+                        if (
+                            self.args.safety_checker
+                            and self.safety_checker is not None
+                            and image is not None
+                        ):
                             image, has_nsfw_concept = self.safety_checker(image)
                             if has_nsfw_concept:
                                 image = None
@@ -175,9 +264,34 @@ class App:
                     media_type="multipart/x-mixed-replace;boundary=frame",
                     headers={"Cache-Control": "no-cache"},
                 )
+            except WebSocketDisconnect as disconnect_error:
+                # Handle websocket disconnection event
+                code = disconnect_error.code
+                if code == 1006:  # ABNORMAL_CLOSURE
+                    logging.info(f"WebSocket abnormally closed during streaming for user {user_id}: Connection was closed without a proper close handshake")
+                else:
+                    logging.info(f"WebSocket disconnected during streaming for user {user_id} with code {code}: {disconnect_error.reason}")
+                
+                # Clean disconnection without error response
+                await self.conn_manager.disconnect(user_id)
+                raise HTTPException(status_code=204, detail="Connection closed")
+            except RuntimeError as e:
+                error_msg = str(e)
+                if any(err in error_msg for err in ERROR_MESSAGES):
+                    logging.info(
+                        f"WebSocket disconnected during streaming for user {user_id}: {error_msg}"
+                    )
+                    # Clean disconnection without error response
+                    await self.conn_manager.disconnect(user_id)
+                    raise HTTPException(status_code=204, detail="Connection closed")
+                else:
+                    logging.error(f"Streaming Runtime Error: {e}, {user_id}")
+                    raise HTTPException(status_code=500, detail="Streaming error")
             except Exception as e:
-                logging.error(f"Streaming Error: {e}, {user_id} ")
-                raise HTTPException(status_code=404, detail="User not found")
+                logging.error(f"Streaming Error: {e}, {user_id}")
+                # Always ensure we disconnect the user on error
+                await self.conn_manager.disconnect(user_id)
+                raise HTTPException(status_code=500, detail="Streaming error")
 
         # route to setup frontend
         @self.app.get("/api/settings")
@@ -185,7 +299,7 @@ class App:
             info_schema = self.pipeline.Info.schema()
             info = self.pipeline.Info()
             page_content = ""
-            if hasattr(info, 'page_content') and info.page_content:
+            if hasattr(info, "page_content") and info.page_content:
                 page_content = markdown2.markdown(info.page_content)
 
             input_params = self.pipeline.InputParams.schema()
@@ -234,7 +348,7 @@ if __name__ == "__main__":
     # app = create_app(config)  # Create the app once
 
     uvicorn.run(
-        app,
+        "main:app",
         host=config.host,
         port=config.port,
         reload=config.reload,
