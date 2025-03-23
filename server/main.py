@@ -10,30 +10,53 @@ import logging
 from config import config, Args
 from connection_manager import ConnectionManager, ServerFullException
 import uuid
+from uuid import UUID
 import time
-from types import SimpleNamespace
-from util import pil_to_frame, bytes_to_pil, is_firefox, get_pipeline_class
+from typing import Any, Protocol, TypeVar, runtime_checkable, cast
+from util import pil_to_frame, bytes_to_pil, is_firefox, get_pipeline_class, ParamsModel
 from device import device, torch_dtype
 import asyncio
 import os
 import time
 import torch
+from pydantic import BaseModel, create_model
+
+@runtime_checkable
+class BasePipeline(Protocol):
+    class Info:
+        @classmethod
+        def schema(cls) -> dict[str, Any]:
+            ...
+        page_content: str | None
+        input_mode: str
+    
+    class InputParams(ParamsModel):
+        @classmethod
+        def schema(cls) -> dict[str, Any]:
+            ...
+        
+        def dict(self) -> dict[str, Any]:
+            ...
+            
+    def predict(self, params: ParamsModel) -> Image.Image | None:
+        ...
 
 
 THROTTLE = 1.0 / 120
 
 
 class App:
-    def __init__(self, config: Args, pipeline):
+    def __init__(self, config: Args, pipeline_instance: BasePipeline):
         self.args = config
-        self.pipeline = pipeline
+        self.pipeline = pipeline_instance
         self.app = FastAPI()
         self.conn_manager = ConnectionManager()
+        self.safety_checker: SafetyChecker | None = None
         if self.args.safety_checker:
             self.safety_checker = SafetyChecker(device=device.type)
         self.init_app()
 
-    def init_app(self):
+    def init_app(self) -> None:
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=["*"],
@@ -43,7 +66,7 @@ class App:
         )
 
         @self.app.websocket("/api/ws/{user_id}")
-        async def websocket_endpoint(user_id: uuid.UUID, websocket: WebSocket):
+        async def websocket_endpoint(user_id: UUID, websocket: WebSocket) -> None:
             try:
                 await self.conn_manager.connect(
                     user_id, websocket, self.args.max_queue_size
@@ -55,9 +78,9 @@ class App:
                 await self.conn_manager.disconnect(user_id)
                 logging.info(f"User disconnected: {user_id}")
 
-        async def handle_websocket_data(user_id: uuid.UUID):
+        async def handle_websocket_data(user_id: UUID) -> None:
             if not self.conn_manager.check_user(user_id):
-                return HTTPException(status_code=404, detail="User not found")
+                raise HTTPException(status_code=404, detail="User not found")
             last_time = time.time()
             try:
                 while True:
@@ -75,19 +98,29 @@ class App:
                         await self.conn_manager.disconnect(user_id)
                         return
                     data = await self.conn_manager.receive_json(user_id)
+                    if data is None:
+                        continue
+                        
                     if data["status"] == "next_frame":
-                        info = pipeline.Info()
-                        params = await self.conn_manager.receive_json(user_id)
-                        params = pipeline.InputParams(**params)
-                        params = SimpleNamespace(**params.dict())
+                        info = self.pipeline.Info()
+                        params_data = await self.conn_manager.receive_json(user_id)
+                        if params_data is None:
+                            continue
+                            
+                        params = self.pipeline.InputParams.model_validate(params_data)
+                        
                         if info.input_mode == "image":
                             image_data = await self.conn_manager.receive_bytes(user_id)
-                            if len(image_data) == 0:
+                            if image_data is None or len(image_data) == 0:
                                 await self.conn_manager.send_json(
                                     user_id, {"status": "send_frame"}
                                 )
                                 continue
-                            params.image = bytes_to_pil(image_data)
+                            
+                            # Create a new Pydantic model with the image field
+                            params_dict = params.model_dump()
+                            params_dict["image"] = bytes_to_pil(image_data)
+                            params = self.pipeline.InputParams.model_validate(params_dict)
 
                         await self.conn_manager.update_data(user_id, params)
                         await self.conn_manager.send_json(user_id, {"status": "wait"})
@@ -97,29 +130,32 @@ class App:
                 await self.conn_manager.disconnect(user_id)
 
         @self.app.get("/api/queue")
-        async def get_queue_size():
+        async def get_queue_size() -> JSONResponse:
             queue_size = self.conn_manager.get_user_count()
             return JSONResponse({"queue_size": queue_size})
 
         @self.app.get("/api/stream/{user_id}")
-        async def stream(user_id: uuid.UUID, request: Request):
+        async def stream(user_id: UUID, request: Request) -> StreamingResponse:
             try:
-
-                async def generate():
-                    last_params = SimpleNamespace()
+                async def generate() -> bytes:
+                    last_params: ParamsModel | None = None
                     while True:
                         last_time = time.time()
                         await self.conn_manager.send_json(
                             user_id, {"status": "send_frame"}
                         )
                         params = await self.conn_manager.get_latest_data(user_id)
-                        if params.__dict__ == last_params.__dict__ or params is None:
+                        
+                        if (params is None or 
+                            (last_params is not None and 
+                             params.model_dump() == last_params.model_dump())):
                             await asyncio.sleep(THROTTLE)
                             continue
-                        last_params: SimpleNamespace = params
-                        image = pipeline.predict(params)
+                            
+                        last_params = params
+                        image = self.pipeline.predict(params)
 
-                        if self.args.safety_checker:
+                        if self.args.safety_checker and self.safety_checker is not None and image is not None:
                             image, has_nsfw_concept = self.safety_checker(image)
                             if has_nsfw_concept:
                                 image = None
@@ -141,23 +177,24 @@ class App:
                 )
             except Exception as e:
                 logging.error(f"Streaming Error: {e}, {user_id} ")
-                return HTTPException(status_code=404, detail="User not found")
+                raise HTTPException(status_code=404, detail="User not found")
 
         # route to setup frontend
         @self.app.get("/api/settings")
-        async def settings():
-            info_schema = pipeline.Info.schema()
-            info = pipeline.Info()
-            if info.page_content:
+        async def settings() -> JSONResponse:
+            info_schema = self.pipeline.Info.schema()
+            info = self.pipeline.Info()
+            page_content = ""
+            if hasattr(info, 'page_content') and info.page_content:
                 page_content = markdown2.markdown(info.page_content)
 
-            input_params = pipeline.InputParams.schema()
+            input_params = self.pipeline.InputParams.schema()
             return JSONResponse(
                 {
                     "info": info_schema,
                     "input_params": input_params,
                     "max_queue_size": self.args.max_queue_size,
-                    "page_content": page_content if info.page_content else "",
+                    "page_content": page_content,
                 }
             )
 
@@ -169,17 +206,35 @@ class App:
         )
 
 
+# def create_app(config):
+#     print(f"Device: {device}")
+#     print(f"torch_dtype: {torch_dtype}")
+
+#     # Create pipeline once
+#     pipeline_class = get_pipeline_class(config.pipeline)
+#     pipeline_instance = pipeline_class(config, device, torch_dtype)
+
+#     # Pass the existing pipeline instance to App
+#     app = App(config, pipeline_instance).app
+#     return app
+
+
+# Create app instance at module level
 print(f"Device: {device}")
 print(f"torch_dtype: {torch_dtype}")
+
 pipeline_class = get_pipeline_class(config.pipeline)
-pipeline = pipeline_class(config, device, torch_dtype)
-app = App(config, pipeline).app
+pipeline_instance = pipeline_class(config, device, torch_dtype)
+app = App(config, pipeline_instance).app  # This creates the FastAPI app instance
+
 
 if __name__ == "__main__":
     import uvicorn
 
+    # app = create_app(config)  # Create the app once
+
     uvicorn.run(
-        "main:app",
+        app,
         host=config.host,
         port=config.port,
         reload=config.reload,

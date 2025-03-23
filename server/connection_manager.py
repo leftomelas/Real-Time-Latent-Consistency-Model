@@ -1,12 +1,12 @@
-from typing import Dict, Union
 from uuid import UUID
 import asyncio
 from fastapi import WebSocket
 from starlette.websockets import WebSocketState
 import logging
-from types import SimpleNamespace
+from typing import Any, TypeVar
+from util import ParamsModel
 
-Connections = Dict[UUID, Dict[str, Union[WebSocket, asyncio.Queue]]]
+Connections = dict[UUID, dict[str, WebSocket | asyncio.Queue]]
 
 
 class ServerFullException(Exception):
@@ -44,13 +44,13 @@ class ConnectionManager:
     def check_user(self, user_id: UUID) -> bool:
         return user_id in self.active_connections
 
-    async def update_data(self, user_id: UUID, new_data: SimpleNamespace):
+    async def update_data(self, user_id: UUID, new_data: ParamsModel):
         user_session = self.active_connections.get(user_id)
         if user_session:
             queue = user_session["queue"]
             await queue.put(new_data)
 
-    async def get_latest_data(self, user_id: UUID) -> SimpleNamespace:
+    async def get_latest_data(self, user_id: UUID) -> ParamsModel | None:
         user_session = self.active_connections.get(user_id)
         if user_session:
             queue = user_session["queue"]
@@ -58,6 +58,7 @@ class ConnectionManager:
                 return await queue.get()
             except asyncio.QueueEmpty:
                 return None
+        return None
 
     def delete_user(self, user_id: UUID):
         user_session = self.active_connections.pop(user_id, None)
@@ -86,7 +87,7 @@ class ConnectionManager:
             await websocket.close()
         self.delete_user(user_id)
 
-    async def send_json(self, user_id: UUID, data: Dict):
+    async def send_json(self, user_id: UUID, data: dict):
         try:
             websocket = self.get_websocket(user_id)
             if websocket:
@@ -94,18 +95,22 @@ class ConnectionManager:
         except Exception as e:
             logging.error(f"Error: Send json: {e}")
 
-    async def receive_json(self, user_id: UUID) -> Dict:
+    async def receive_json(self, user_id: UUID) -> dict | None:
         try:
             websocket = self.get_websocket(user_id)
             if websocket:
                 return await websocket.receive_json()
+            return None
         except Exception as e:
             logging.error(f"Error: Receive json: {e}")
+            return None
 
-    async def receive_bytes(self, user_id: UUID) -> bytes:
+    async def receive_bytes(self, user_id: UUID) -> bytes | None:
         try:
             websocket = self.get_websocket(user_id)
             if websocket:
                 return await websocket.receive_bytes()
+            return None
         except Exception as e:
             logging.error(f"Error: Receive bytes: {e}")
+            return None

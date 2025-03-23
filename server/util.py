@@ -1,10 +1,28 @@
 from importlib import import_module
-from types import ModuleType
+from typing import Any, TypeVar, Generic, TypeVar
 from PIL import Image
 import io
+from pydantic import BaseModel, create_model, Field
 
 
-def get_pipeline_class(pipeline_name: str) -> ModuleType:
+TPipeline = TypeVar("TPipeline", bound=type[Any])
+T = TypeVar('T')
+
+
+class ParamsModel(BaseModel):
+    """Base model for pipeline parameters."""
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> 'ParamsModel':
+        """Create a model instance from dictionary data."""
+        return cls.model_validate(data)
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert model to dictionary."""
+        return self.model_dump()
+
+
+def get_pipeline_class(pipeline_name: str) -> TPipeline:
     try:
         module = import_module(f"pipelines.{pipeline_name}")
     except ModuleNotFoundError:
@@ -14,6 +32,10 @@ def get_pipeline_class(pipeline_name: str) -> ModuleType:
 
     if pipeline_class is None:
         raise ValueError(f"'Pipeline' class not found in module '{pipeline_name}'.")
+
+    # Type check to ensure we're returning a class
+    if not isinstance(pipeline_class, type):
+        raise TypeError(f"'Pipeline' in module '{pipeline_name}' is not a class")
 
     return pipeline_class
 
