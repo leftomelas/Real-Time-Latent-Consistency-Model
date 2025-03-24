@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from PIL import Image
 from util import ParamsModel
 import math
+from pruna import SmashConfig, smash
 
 base = "stabilityai/stable-diffusion-xl-base-1.0"
 repo = "ByteDance/SDXL-Lightning"
@@ -134,6 +135,13 @@ class Pipeline:
         self.pipe.scheduler = EulerDiscreteScheduler.from_config(
             self.pipe.scheduler.config, timestep_spacing="trailing"
         )
+
+        if args.pruna:
+            # Create and smash your model
+            smash_config = SmashConfig()
+            smash_config["cacher"] = "deepcache"
+            smash_config["compiler"] = "stable_fast"
+            self.pipe = smash(model=self.pipe, smash_config=smash_config)
 
         if args.sfast:
             from sfast.compilers.stable_diffusion_pipeline_compiler import (

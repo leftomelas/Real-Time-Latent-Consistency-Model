@@ -15,6 +15,7 @@ from PIL import Image
 from util import ParamsModel
 import math
 
+from pruna import smash, SmashConfig
 
 base_model = "stabilityai/sd-turbo"
 taesd_model = "madebyollin/taesd"
@@ -102,6 +103,13 @@ class Pipeline:
                 taesd_model, torch_dtype=torch_dtype, use_safetensors=True
             ).to(device)
 
+        if args.pruna:
+            # Create and smash your model
+            smash_config = SmashConfig()
+            smash_config["cacher"] = "deepcache"
+            smash_config["compiler"] = "stable_fast"
+            self.pipe = smash(model=self.pipe, smash_config=smash_config)
+
         if args.sfast:
             from sfast.compilers.stable_diffusion_pipeline_compiler import (
                 compile,
@@ -130,8 +138,8 @@ class Pipeline:
 
         self.pipe.set_progress_bar_config(disable=True)
         self.pipe.to(device=device, dtype=torch_dtype)
-        if device.type != "mps":
-            self.pipe.unet.to(memory_format=torch.channels_last)
+        # if device.type != "mps":
+        #     self.pipe.unet.to(memory_format=torch.channels_last)
 
         if args.torch_compile:
             print("Running torch compile")

@@ -2,21 +2,19 @@ import torch
 
 from optimum.quanto import freeze, qfloat8, quantize
 from transformers.modeling_utils import PreTrainedModel
+from diffusers import AutoencoderTiny
+from diffusers.models.transformers.transformer_flux import FluxTransformer2DModel
+from diffusers.pipelines.flux.pipeline_flux_img2img import FluxImg2ImgPipeline
+from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
+from diffusers import FlowMatchEulerDiscreteScheduler, AutoencoderKL
 
-from diffusers import (
-    FlowMatchEulerDiscreteScheduler,
-    AutoencoderKL,
-    AutoencoderTiny,
-    FluxImg2ImgPipeline,
-    FluxPipeline,
-)
 
-from diffusers import (
-    FluxImg2ImgPipeline,
-    FluxPipeline,
-    FluxTransformer2DModel,
-    GGUFQuantizationConfig,
-)
+from pruna import smash, SmashConfig
+from pruna.telemetry import set_telemetry_metrics
+
+set_telemetry_metrics(False)  # disable telemetry for current session
+set_telemetry_metrics(False, set_as_default=True)  # disable telemetry globally
+
 
 try:
     import intel_extension_for_pytorch as ipex  # type: ignore
@@ -76,10 +74,10 @@ class Pipeline:
             1, min=1, max=15, title="Steps", field="range", hide=True, id="steps"
         )
         width: int = Field(
-            256, min=2, max=15, title="Width", disabled=True, hide=True, id="width"
+            1024, min=2, max=15, title="Width", disabled=True, hide=True, id="width"
         )
         height: int = Field(
-            256, min=2, max=15, title="Height", disabled=True, hide=True, id="height"
+            1024, min=2, max=15, title="Height", disabled=True, hide=True, id="height"
         )
         strength: float = Field(
             0.5,
@@ -107,33 +105,101 @@ class Pipeline:
         #     "https://huggingface.co/city96/FLUX.1-dev-gguf/blob/main/flux1-dev-Q2_K.gguf"
         # )
         print("Loading model")
-        # ckpt_path: str = "https://huggingface.co/city96/FLUX.1-schnell-gguf/blob/main/flux1-schnell-Q6_K.gguf"
-        ckpt_path: str = "https://huggingface.co/city96/FLUX.1-schnell-gguf/blob/main/flux1-schnell-Q4_K_S.gguf"
-        transformer = FluxTransformer2DModel.from_single_file(
-            ckpt_path,
-            quantization_config=GGUFQuantizationConfig(compute_dtype=torch.bfloat16),
-            torch_dtype=torch.bfloat16,
+
+        model_id = "black-forest-labs/FLUX.1-schnell"
+        model_revision = "refs/pr/1"
+        text_model_id = "openai/clip-vit-large-patch14"
+        model_data_type = torch.bfloat16
+        tokenizer = CLIPTokenizer.from_pretrained(
+            text_model_id, torch_dtype=model_data_type
+        )
+        text_encoder = CLIPTextModel.from_pretrained(
+            text_model_id, torch_dtype=model_data_type
         )
 
-        # else:
-        pipe = FluxImg2ImgPipeline.from_pretrained(
-            # "black-forest-labs/FLUX.1-dev",
-            "black-forest-labs/FLUX.1-Schnell",
+        # 2
+        tokenizer_2 = T5TokenizerFast.from_pretrained(
+            model_id,
+            subfolder="tokenizer_2",
+            torch_dtype=model_data_type,
+            revision=model_revision,
+        )
+        text_encoder_2 = T5EncoderModel.from_pretrained(
+            model_id,
+            subfolder="text_encoder_2",
+            torch_dtype=model_data_type,
+            revision=model_revision,
+        )
+
+        # Transformers
+        scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+            model_id, subfolder="scheduler", revision=model_revision
+        )
+        transformer = FluxTransformer2DModel.from_pretrained(
+            model_id,
+            subfolder="transformer",
+            torch_dtype=model_data_type,
+            revision=model_revision,
+        )
+
+        # VAE
+        # vae = AutoencoderKL.from_pretrained(
+        #     model_id,
+        #     subfolder="vae",
+        #     torch_dtype=model_data_type,
+        #     revision=model_revision,
+        # )
+
+        vae = AutoencoderTiny.from_pretrained(
+            "madebyollin/taef1", torch_dtype=torch.bfloat16
+        )
+
+        # Initialize the SmashConfig
+        smash_config = SmashConfig()
+        smash_config["quantizer"] = "quanto"
+        smash_config["quanto_calibrate"] = False
+        smash_config["quanto_weight_bits"] = "qint4"
+        # (
+        #     "qint4"  # "qfloat8"  # or "qint2", "qint4", "qint8"
+        # )
+
+        transformer = smash(
+            model=transformer,
+            smash_config=smash_config,
+        )
+        text_encoder_2 = smash(
+            model=text_encoder_2,
+            smash_config=smash_config,
+        )
+
+        pipe = FluxImg2ImgPipeline(
+            scheduler=scheduler,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            text_encoder_2=text_encoder_2,
+            tokenizer_2=tokenizer_2,
+            vae=vae,
             transformer=transformer,
-            torch_dtype=torch.bfloat16,
         )
-        if args.taesd:
-            pipe.vae = AutoencoderTiny.from_pretrained(
-                taesd_path, torch_dtype=torch.bfloat16, use_safetensors=True
-            )
+
+        # if args.taesd:
+        #     pipe.vae = AutoencoderTiny.from_pretrained(
+        #         taesd_path, torch_dtype=torch.bfloat16, use_safetensors=True
+        #     )
         # pipe.enable_model_cpu_offload()
-        pipe = pipe.to(device)
+        pipe.text_encoder.to(device)
+        pipe.vae.to(device)
+        pipe.transformer.to(device)
+        pipe.text_encoder_2.to(device)
 
         # pipe.enable_model_cpu_offload()
+        # For added memory savings run this block, there is however a trade-off with speed.
+        # vae.enable_tiling()
+        # vae.enable_slicing()
+        # pipe.enable_sequential_cpu_offload()
 
         self.pipe = pipe
         self.pipe.set_progress_bar_config(disable=True)
-
         #     vae = AutoencoderKL.from_pretrained(
         #         base_model_path, subfolder="vae", torch_dtype=torch_dtype
         # )

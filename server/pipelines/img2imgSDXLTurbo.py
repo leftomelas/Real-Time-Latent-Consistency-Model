@@ -17,6 +17,13 @@ from PIL import Image
 from util import ParamsModel
 import math
 
+from pruna import smash, SmashConfig
+from pruna.telemetry import set_telemetry_metrics
+
+set_telemetry_metrics(False)  # disable telemetry for current session
+set_telemetry_metrics(False, set_as_default=True)  # disable telemetry globally
+
+
 base_model = "stabilityai/sdxl-turbo"
 taesd_model = "madebyollin/taesdxl"
 
@@ -104,10 +111,11 @@ class Pipeline:
         )
 
     def __init__(self, args: Args, device: torch.device, torch_dtype: torch.dtype):
-        self.pipe = AutoPipelineForImage2Image.from_pretrained(
+        base_pipe = AutoPipelineForImage2Image.from_pretrained(
             base_model,
             safety_checker=None,
         )
+        self.pipe = None
         if args.taesd:
             self.pipe.vae = AutoencoderTiny.from_pretrained(
                 taesd_model, torch_dtype=torch_dtype, use_safetensors=True
@@ -125,10 +133,15 @@ class Pipeline:
             config.enable_cuda_graph = True
             self.pipe = compile(self.pipe, config=config)
 
-        self.pipe.set_progress_bar_config(disable=True)
-        self.pipe.to(device=device, dtype=torch_dtype)
         if device.type != "mps":
             self.pipe.unet.to(memory_format=torch.channels_last)
+
+        if args.pruna:
+            # Create and smash your model
+            smash_config = SmashConfig()
+            smash_config["cacher"] = "deepcache"
+            smash_config["compiler"] = "stable_fast"
+            self.pipe = smash(model=base_pipe, smash_config=smash_config)
 
         if args.torch_compile:
             print("Running torch compile")
@@ -150,6 +163,9 @@ class Pipeline:
                 returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
                 requires_pooled=[False, True],
             )
+
+        self.pipe.set_progress_bar_config(disable=True)
+        self.pipe.to(device=device, dtype=torch_dtype)
 
     def predict(self, params: "Pipeline.InputParams") -> Image.Image:
         generator = torch.manual_seed(params.seed)

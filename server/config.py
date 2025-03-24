@@ -20,6 +20,7 @@ class Args(BaseModel):
     onediff: bool = False
     compel: bool = False
     debug: bool = False
+    pruna: bool = False
 
     def pretty_print(self) -> None:
         print("\n")
@@ -122,6 +123,12 @@ parser.add_argument(
     action="store_true",
     default=False,
     help="Enable OneDiff",
+)
+parser.add_argument(
+    "--pruna",
+    action="store_true",
+    default=False,
+    help="Enable Pruna",
 )
 parser.set_defaults(taesd=USE_TAESD)
 

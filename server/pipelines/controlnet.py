@@ -17,6 +17,8 @@ from config import Args
 from pydantic import BaseModel, Field
 from PIL import Image
 import math
+from pruna import SmashConfig, smash
+from util import ParamsModel
 
 base_model = "SimianLuo/LCM_Dreamshaper_v7"
 taesd_model = "madebyollin/taesd"
@@ -58,7 +60,7 @@ class Pipeline:
         input_mode: str = "image"
         page_content: str = page_content
 
-    class InputParams(BaseModel):
+    class InputParams(ParamsModel):
         prompt: str = Field(
             default_prompt,
             title="Prompt",
@@ -169,6 +171,13 @@ class Pipeline:
             self.pipe.vae = AutoencoderTiny.from_pretrained(
                 taesd_model, torch_dtype=torch_dtype, use_safetensors=True
             ).to(device)
+
+        if args.pruna:
+            # Create and smash your model
+            smash_config = SmashConfig()
+            smash_config["cacher"] = "deepcache"
+            smash_config["compiler"] = "stable_fast"
+            self.pipe = smash(model=self.pipe, smash_config=smash_config)
 
         if args.sfast:
             print("\nRunning sfast compile\n")
