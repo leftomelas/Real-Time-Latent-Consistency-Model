@@ -15,6 +15,7 @@ except:
 
 from config import Args
 from pydantic import BaseModel, Field
+from util import ParamsModel
 from PIL import Image
 
 model_id = "stabilityai/stable-diffusion-xl-base-1.0"
@@ -39,7 +40,7 @@ class Pipeline:
         input_mode: str = "image"
         page_content: str = page_content
 
-    class InputParams(BaseModel):
+    class InputParams(ParamsModel):
         prompt: str = Field(
             default_prompt,
             title="Prompt",

@@ -3,6 +3,7 @@ from torchvision import transforms
 
 from config import Args
 from pydantic import BaseModel, Field
+from util import ParamsModel
 from PIL import Image
 from pipelines.pix2pix.pix2pix_turbo import Pix2Pix_Turbo
 from pipelines.utils.canny_gpu import ScharrOperator
@@ -35,7 +36,7 @@ class Pipeline:
         input_mode: str = "image"
         page_content: str = page_content
 
-    class InputParams(BaseModel):
+    class InputParams(ParamsModel):
         prompt: str = Field(
             default_prompt,
             title="Prompt",

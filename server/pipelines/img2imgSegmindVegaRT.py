@@ -14,6 +14,7 @@ except:
 import psutil
 from config import Args
 from pydantic import BaseModel, Field
+from util import ParamsModel
 from PIL import Image
 import math
 
@@ -57,7 +58,7 @@ class Pipeline:
         input_mode: str = "image"
         page_content: str = page_content
 
-    class InputParams(BaseModel):
+    class InputParams(ParamsModel):
         prompt: str = Field(
             default_prompt,
             title="Prompt",

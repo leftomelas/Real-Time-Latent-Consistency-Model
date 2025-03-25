@@ -10,6 +10,7 @@ except:
 import psutil
 from config import Args
 from pydantic import BaseModel, Field
+from util import ParamsModel
 from PIL import Image
 
 base_model = "wavymulder/Analog-Diffusion"
@@ -55,7 +56,7 @@ class Pipeline:
         input_mode: str = "text"
         page_content: str = page_content
 
-    class InputParams(BaseModel):
+    class InputParams(ParamsModel):
         prompt: str = Field(
             default_prompt,
             title="Prompt",
