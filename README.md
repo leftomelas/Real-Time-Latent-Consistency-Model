@@ -25,9 +25,9 @@ You need CUDA and Python 3.10, Node > 19, Mac with an M1/M2/M3 chip or Intel Arc
 ## Install
 
 ```bash
-python -m venv venv
-source venv/bin/activate
-pip3 install -r server/requirements.txt
+uv venv --python=3.10  
+source .venv/bin/activate
+uv pip install -r server/requirements.txt
 cd frontend && npm install && npm run build && cd ..
 python server/main.py --reload --pipeline img2imgSDTurbo 
  ```
