@@ -76,7 +76,7 @@ export const lcmLiveActions = {
           }
 
           // If connection was never established (close without open)
-          if (event.code === 1006 && streamId.get() === null) {
+          if (event.code === 1006 && get(streamId) === null) {
             reject(new Error('Cannot connect to server. Please try again later.'));
           }
         };

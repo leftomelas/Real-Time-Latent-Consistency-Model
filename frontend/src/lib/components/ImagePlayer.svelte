@@ -7,8 +7,8 @@
   import Expand from '$lib/icons/expand.svelte';
   import { snapImage, expandWindow } from '$lib/utils';
 
-  $: isLCMRunning = $lcmLiveStatus !== LCMLiveStatus.DISCONNECTED && 
-                 $lcmLiveStatus !== LCMLiveStatus.ERROR;
+  $: isLCMRunning =
+    $lcmLiveStatus !== LCMLiveStatus.DISCONNECTED && $lcmLiveStatus !== LCMLiveStatus.ERROR;
   let imageEl: HTMLImageElement;
   let expandedWindow: Window;
   let isExpanded = false;
@@ -42,9 +42,9 @@
   <!-- svelte-ignore a11y-missing-attribute -->
   {#if $lcmLiveStatus === LCMLiveStatus.CONNECTING}
     <!-- Show connecting spinner -->
-    <div class="flex items-center justify-center h-full w-full">
-      <div class="animate-spin rounded-full h-16 w-16 border-b-2 border-white"></div>
-      <p class="text-white ml-2">Connecting...</p>
+    <div class="flex h-full w-full items-center justify-center">
+      <div class="h-16 w-16 animate-spin rounded-full border-b-2 border-white"></div>
+      <p class="ml-2 text-white">Connecting...</p>
     </div>
   {:else if isLCMRunning}
     {#if !isExpanded}
@@ -81,10 +81,10 @@
     </div>
   {:else if $lcmLiveStatus === LCMLiveStatus.ERROR}
     <!-- Show error state with red border -->
-    <div class="flex items-center justify-center h-full w-full border-2 border-red-500 rounded-lg bg-gray-900">
-      <p class="text-center text-white p-4">
-        Connection error
-      </p>
+    <div
+      class="flex h-full w-full items-center justify-center rounded-lg border-2 border-red-500 bg-gray-900"
+    >
+      <p class="p-4 text-center text-white">Connection error</p>
     </div>
   {:else}
     <img

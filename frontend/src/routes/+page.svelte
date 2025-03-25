@@ -57,10 +57,10 @@
     }
   }
 
-  $: isLCMRunning = $lcmLiveStatus !== LCMLiveStatus.DISCONNECTED && 
-                 $lcmLiveStatus !== LCMLiveStatus.ERROR;
+  $: isLCMRunning =
+    $lcmLiveStatus !== LCMLiveStatus.DISCONNECTED && $lcmLiveStatus !== LCMLiveStatus.ERROR;
   $: isConnecting = $lcmLiveStatus === LCMLiveStatus.CONNECTING;
-                 
+
   $: {
     // Set warning messages based on lcmLiveStatus
     if ($lcmLiveStatus === LCMLiveStatus.TIMEOUT) {
@@ -76,17 +76,17 @@
         if (isConnecting) {
           return; // Don't allow multiple connection attempts
         }
-        
+
         // Clear any previous warning messages
         warningMessage = '';
         disabled = true;
-        
+
         try {
           if (isImageMode) {
             await mediaStreamActions.enumerateDevices();
             await mediaStreamActions.start();
           }
-          
+
           await lcmLiveActions.start(getSreamdata);
           toggleQueueChecker(false);
         } finally {
@@ -96,7 +96,7 @@
       } else {
         // Handle stopping - disable button during this process too
         disabled = true;
-        
+
         try {
           if (isImageMode) {
             mediaStreamActions.stop();
@@ -114,19 +114,19 @@
       toggleQueueChecker(true);
     }
   }
-  
+
   // Reconnect function for automatic reconnection
   async function reconnect() {
     try {
       disabled = true;
       warningMessage = 'Reconnecting...';
-      
+
       if (isImageMode) {
         await mediaStreamActions.stop();
         await mediaStreamActions.enumerateDevices();
         await mediaStreamActions.start();
       }
-      
+
       await lcmLiveActions.reconnect(getSreamdata);
       warningMessage = '';
       toggleQueueChecker(false);
@@ -162,13 +162,10 @@
         > and run it on your own GPU.
       </p>
     {/if}
-    
+
     {#if $lcmLiveStatus === LCMLiveStatus.ERROR}
-      <p class="text-sm mt-2">
-        <button 
-          class="text-blue-500 underline hover:no-underline" 
-          on:click={reconnect}
-          disabled={disabled}>
+      <p class="mt-2 text-sm">
+        <button class="text-blue-500 underline hover:no-underline" on:click={reconnect} {disabled}>
           Try reconnecting
         </button>
       </p>
