@@ -1,13 +1,8 @@
---extra-index-url https://download.pytorch.org/whl/cu118
-torch==2.5.1
-torchvision
-torchaudio
-xformers; sys_platform != 'darwin' or platform_machine != 'arm64'
+# Use with: uv pip install --no-cache --system --index-strategy=unsafe-best-match -r requirements.txt
 numpy
 diffusers
 llvmlite>=0.39.0
 numba>=0.56.0
-pruna[stable-fast] ; sys_platform != 'darwin' or platform_machine != 'arm64'
 transformers
 pydantic
 huggingface-hub
@@ -18,18 +13,27 @@ Pillow==11.0.0
 accelerate
 compel==2.0.2
 controlnet-aux==0.0.9
-peft==0.14.0
+peft
 markdown2
 safetensors
-# stable_fast @ https://github.com/chengzeyi/stable-fast/releases/download/nightly/stable_fast-1.0.5.dev20241127+torch230cu121-cp310-cp310-manylinux2014_x86_64.whl ; sys_platform != 'darwin' or platform_machine != 'arm64'
-#oneflow @ https://github.com/siliconflow/oneflow_releases/releases/download/community_cu121/oneflow-0.9.1.dev20241114%2Bcu121-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl ; sys_platform != 'darwin' or platform_machine != 'arm64'
-#onediff @ git+https://github.com/siliconflow/onediff.git@main#egg=onediff ; sys_platform != 'darwin' or platform_machine != 'arm64'
 setuptools
-mpmath==1.3.0
+mpmath
 controlnet-aux
 sentencepiece==0.2.0
 optimum-quanto # has to be optimum-quanto==0.2.5 for pruna int4
-gguf==0.13.0
+gguf
 types-Pillow
 mypy
 python-dotenv
+requests>=2.31.0  # Added explicitly to resolve dependency conflict
+
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch==2.5.1
+torchvision
+torchaudio
+xformers; sys_platform != 'darwin' or platform_machine != 'arm64'
+pruna[stable-fast] ; sys_platform != 'darwin' or platform_machine != 'arm64'
+
+# stable_fast @ https://github.com/chengzeyi/stable-fast/releases/download/nightly/stable_fast-1.0.5.dev20241127+torch230cu121-cp310-cp310-manylinux2014_x86_64.whl ; sys_platform != 'darwin' or platform_machine != 'arm64'
+#oneflow @ https://github.com/siliconflow/oneflow_releases/releases/download/community_cu121/oneflow-0.9.1.dev20241114%2Bcu121-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl ; sys_platform != 'darwin' or platform_machine != 'arm64'
+#onediff @ git+https://github.com/siliconflow/onediff.git@main#egg=onediff ; sys_platform != 'darwin' or platform_machine != 'arm64'
