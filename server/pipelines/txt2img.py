@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from util import ParamsModel
 from PIL import Image
 from typing import List
+from pruna import SmashConfig, smash
 
 base_model = "SimianLuo/LCM_Dreamshaper_v7"
 taesd_model = "madebyollin/taesd"
@@ -85,6 +86,13 @@ class Pipeline:
             self.pipe.vae = AutoencoderTiny.from_pretrained(
                 taesd_model, torch_dtype=torch_dtype, use_safetensors=True
             ).to(device)
+
+        if args.pruna:
+            # Create and smash your model
+            smash_config = SmashConfig()
+            # smash_config["cacher"] = "deepcache"
+            smash_config["compiler"] = "stable_fast"
+            self.pipe = smash(model=self.pipe, smash_config=smash_config)
 
         if args.sfast:
             from sfast.compilers.stable_diffusion_pipeline_compiler import (
